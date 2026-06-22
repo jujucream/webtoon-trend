@@ -15,7 +15,6 @@ export async function GET() {
   try {
     const todayDate = new Date().toISOString().split('T')[0]
 
-    // 요일별 인기순 + 업데이트순 둘 다 수집
     const res = await fetch(
       'https://comic.naver.com/api/webtoon/titlelist/weekday?order=user',
       {
@@ -35,7 +34,6 @@ export async function GET() {
     let totalSaved = 0
     const summary: Record<string, number> = {}
 
-    // 월~일 전체 요일 수집
     for (const day of DAYS) {
       const webtoons: NaverWebtoon[] = json.titleListMap?.[day] ?? []
       let daySaved = 0
@@ -66,6 +64,7 @@ export async function GET() {
             rank: i + 1,
             recorded_date: todayDate,
             platform: '네이버',
+            day: day,          // ← 요일 추가
           },
           { onConflict: 'webtoon_id,recorded_date,platform' }
         )
