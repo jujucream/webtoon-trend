@@ -9,12 +9,22 @@ type NaverWebtoon = {
   genre: string
 }
 
+// 요일 목록
 const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY']
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url)
+    // URL에서 ?day=MONDAY 같은 파라미터를 읽어옴
+    // 없으면 오늘 요일을 자동으로 사용
+    const dayParam = searchParams.get('day')
+    const todayIndex = new Date().getDay() // 0=일요일, 1=월요일...
+    const todayDay = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'][todayIndex]
+    const targetDay = dayParam ?? todayDay
+
     const todayDate = new Date().toISOString().split('T')[0]
 
+    // 네이버 내부 API 호출
     const res = await fetch(
       'https://comic.naver.com/api/webtoon/titlelist/weekday?order=user',
       {
@@ -31,56 +41,52 @@ export async function GET() {
     }
 
     const json = await res.json()
-    let totalSaved = 0
-    const summary: Record<string, number> = {}
 
-    for (const day of DAYS) {
-      const webtoons: NaverWebtoon[] = json.titleListMap?.[day] ?? []
-      let daySaved = 0
+    // 특정 요일 데이터만 추출
+    const webtoons: NaverWebtoon[] = json.titleListMap?.[targetDay] ?? []
+    let savedCount = 0
 
-      for (let i = 0; i < webtoons.length; i++) {
-        const w = webtoons[i]
+    for (let i = 0; i < webtoons.length; i++) {
+      const w = webtoons[i]
 
-        const { data: webtoonRow } = await supabase
-          .from('webtoons')
-          .upsert(
-            {
-              title: w.titleName,
-              author: w.author,
-              platform: '네이버',
-              genre: w.genre ?? '기타',
-              thumbnail_url: w.thumbNailUrl,
-            },
-            { onConflict: 'title,platform' }
-          )
-          .select('id')
-          .single()
-
-        if (!webtoonRow) continue
-
-        await supabase.from('rankings').upsert(
+      // webtoons 테이블에 저장 (중복이면 업데이트)
+      const { data: webtoonRow } = await supabase
+        .from('webtoons')
+        .upsert(
           {
-            webtoon_id: webtoonRow.id,
-            rank: i + 1,
-            recorded_date: todayDate,
+            title: w.titleName,
+            author: w.author,
             platform: '네이버',
-            day: day,          // ← 요일 추가
+            genre: w.genre ?? '기타',
+            thumbnail_url: w.thumbNailUrl,
           },
-          { onConflict: 'webtoon_id,recorded_date,platform' }
+          { onConflict: 'title,platform' }
         )
+        .select('id')
+        .single()
 
-        daySaved++
-      }
+      if (!webtoonRow) continue
 
-      summary[day] = daySaved
-      totalSaved += daySaved
+      // rankings 테이블에 순위 저장
+      await supabase.from('rankings').upsert(
+        {
+          webtoon_id: webtoonRow.id,
+          rank: i + 1,
+          recorded_date: todayDate,
+          platform: '네이버',
+          day: targetDay,
+        },
+        { onConflict: 'webtoon_id,recorded_date,platform' }
+      )
+
+      savedCount++
     }
 
     return NextResponse.json({
       success: true,
-      message: `총 ${totalSaved}개 저장 완료`,
+      message: `${targetDay} ${savedCount}개 저장 완료`,
       date: todayDate,
-      summary,
+      day: targetDay,
     })
 
   } catch (err) {
